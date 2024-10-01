@@ -35,6 +35,7 @@ This file contains the core scrubber object
 INSPIRATION: https://xkcd.com/1343/
 """
 
+
 class ScrubberCore(object):
     """read input files, manipulate them to perform the following operations:
 
@@ -243,7 +244,7 @@ class ScrubberCore(object):
         )
         # geometry operations
         options["geometry"]["active"] = any(
-           options["geometry"]["values"][x] for x in ["gen3d", "fix_ring_corners"]
+            options["geometry"]["values"][x] for x in ["gen3d", "fix_ring_corners"]
         )
         return options
 
@@ -398,8 +399,8 @@ class ScrubberCore(object):
             self.print_summary()
 
     def wait_pending(self, skipped, quiet=False):
-        """ wait for all pending operations: join registered workers;
-        retrieve information from the comm pipes; populate summary inforation """
+        """wait for all pending operations: join registered workers;
+        retrieve information from the comm pipes; populate summary inforation"""
         for name, worker in self._registered_workers:
             if not quiet:
                 t_start = time.time()
@@ -478,6 +479,7 @@ class ScrubberCore(object):
             else:
                 curr_target[k] = v
 
+
 class Scrub:
 
     def __init__(
@@ -490,13 +492,13 @@ class Scrub:
         skip_tautomers=False,
         skip_ringfix=False,
         skip_gen3d=False,
-        template = None,
-        template_smarts = None,
+        template=None,
+        template_smarts=None,
         do_gen2d=False,
         max_ff_iter=200,
         numconfs=1,
         etkdg_rng_seed=None,
-        ff="uff",
+        ff="mmff94s",
     ):
         self.acid_base_conjugator = AcidBaseConjugator.from_default_data_files()
         self.tautomerizer = Tautomerizer.from_default_data_files()
@@ -506,37 +508,43 @@ class Scrub:
         self.ph_high = ph_high
         self.do_acidbase = not skip_acidbase
         self.do_tautomers = not skip_tautomers
-        self.skip_ringfix = skip_ringfix # not avoiding negative to pass directly to gen3d
+        self.skip_ringfix = (
+            skip_ringfix  # not avoiding negative to pass directly to gen3d
+        )
         self.do_gen3d = not skip_gen3d
         self.template = template
         self.template_smarts = template_smarts
         self.do_gen2d = do_gen2d
         self.max_ff_iter = max_ff_iter
         self.numconfs = numconfs
-        self.etkdg_rng_seed = etkdg_rng_seed
+        self.etkdg_rng_seed = (
+            etkdg_rng_seed if etkdg_rng_seed else random.randint(0, 1000000)
+        )
         self.ff = ff
 
-        if ff == 'espaloma':
+        if ff == "espaloma":
             self.espaloma = EspalomaMinimizer()
         else:
             self.espaloma = None
 
     def __call__(self, input_mol):
 
-        mol = Chem.RemoveHs(input_mol) 
+        mol = Chem.RemoveHs(input_mol)
         pool = [input_mol]
 
         if self.do_acidbase:
             molset = UniqueMoleculeContainer()
             for mol in pool:
-                for mol_out in self.acid_base_conjugator(mol, self.ph_low, self.ph_high):
+                for mol_out in self.acid_base_conjugator(
+                    mol, self.ph_low, self.ph_high
+                ):
                     molset.add(mol_out)
             pool = list(molset)
 
         if self.do_tautomers:
             molset = UniqueMoleculeContainer()
             for mol in pool:
-                for mol_out in self.tautomerizer(mol): 
+                for mol_out in self.tautomerizer(mol):
                     molset.add(mol_out)
             pool = list(molset)
 
@@ -552,10 +560,10 @@ class Scrub:
                     ff=self.ff,
                     espaloma=self.espaloma,
                     template=self.template,
-                    template_smarts=self.template_smarts
+                    template_smarts=self.template_smarts,
                 )
                 output_mol_list.append(mol_out)
-        elif self.do_gen2d: # useful to write SD files
+        elif self.do_gen2d:  # useful to write SD files
             output_mol_list = []
             for mol in pool:
                 AllChem.Compute2DCoords(mol)
@@ -564,79 +572,95 @@ class Scrub:
             output_mol_list = pool
 
         return output_mol_list
-    
-def ConstrainedEmbeding(query_mol, core_mol, confId=-1, randomseed=2342, template_smarts=None,
-                     ff='uff'):
-  """ Generate an embedding of a query molecule where part of the molecule
+
+
+def constrained_embeding(
+    query_mol,
+    core_mol,
+    template_smarts: str = None,
+    numconfs: int = 1,
+    ff: str = "mmff94s",
+    ps=None,
+):
+    """Generate an embedding of a query molecule where part of the molecule
     is constrained to have particular coordinates derived from a core.
-    Alternatively, a SMARTs pattern can be provided to match specific atoms from both molecules 
-  """
-  force_constant = 1000
+    Alternatively, a SMARTs pattern can be provided to match specific atoms from both molecules
+    """
 
-  if ff == 'uff' or ff == 'espaloma':
-    getForceField=AllChem.UFFGetMoleculeForceField
-  elif ff == 'mmff94':
-    getForceField=lambda x:AllChem.MMFFGetMoleculeForceField(x,AllChem.MMFFGetMoleculeProperties(x),confId=confId)
-  elif ff == 'mmff94s':
-    getForceField=lambda x:AllChem.MMFFGetMoleculeForceField(x,AllChem.MMFFGetMoleculeProperties(x, mmffVariant='MMFF94s'),confId=confId)
+    force_constant = 1000
+    confId = -1
 
-  if template_smarts == None:
-    query_match = query_mol.GetSubstructMatches(core_mol)
-    if not query_match:
-      raise ValueError("molecule doesn't match the core")
-    elif len(query_match) > 1:
-      raise RuntimeError('Expected one match but multiple matches were found.')
+    if ff == "uff":
+        getForceField = AllChem.UFFGetMoleculeForceField
+    elif ff == "mmff94":
+        getForceField = lambda x: AllChem.MMFFGetMoleculeForceField(
+            x, AllChem.MMFFGetMoleculeProperties(x), confId=confId
+        )
+    # This is just is a minimization with restraints to force the querry mol to match the template. 
+    # If you chose espaloma as ff it will still minimize it at the end with that forcefield.
+    elif ff == "mmff94s" or ff == "espaloma":
+        getForceField = lambda x: AllChem.MMFFGetMoleculeForceField(
+            x,
+            AllChem.MMFFGetMoleculeProperties(x, mmffVariant="MMFF94s"),
+            confId=confId,
+        )
+
+    if template_smarts == None:
+        query_match = query_mol.GetSubstructMatches(core_mol)
+        if not query_match:
+            raise ValueError("molecule doesn't match the core")
+        elif len(query_match) > 1:
+            raise RuntimeError("Expected one match but multiple matches were found.")
+        else:
+            query_match = query_match[0]
+
+        algMap = [(j, i) for i, j in enumerate(query_match)]
+
     else:
-      query_match=query_match[0]
+        query_match = query_mol.GetSubstructMatches(template_smarts)
 
-    algMap = [(j, i) for i, j in enumerate(query_match)]
-    
-  else:
-    query_match = query_mol.GetSubstructMatches(template_smarts)
-    
-    if not query_match:
-      raise ValueError("SMARTs doesn't match the molecule")
-    elif len(query_match) > 1:
-      raise RuntimeError('Expected one match but multiple matches were found.')
-    else:
-      query_match = query_match[0]
+        if not query_match:
+            raise ValueError("SMARTs doesn't match the molecule")
+        elif len(query_match) > 1:
+            raise RuntimeError("Expected one match but multiple matches were found.")
+        else:
+            query_match = query_match[0]
 
-    core_match = core_mol.GetSubstructMatches(template_smarts)
+        core_match = core_mol.GetSubstructMatches(template_smarts)
 
-    if not core_match:
-      raise ValueError("SMARTs doesn't match the template")
-    elif len(core_match) > 1:
-      raise RuntimeError('Expected one match but multiple matches were found.')
-    else:
-      core_match = core_match[0]
+        if not core_match:
+            raise ValueError("SMARTs doesn't match the template")
+        elif len(core_match) > 1:
+            raise RuntimeError("Expected one match but multiple matches were found.")
+        else:
+            core_match = core_match[0]
 
-    algMap = [(j, i) for j, i in zip(query_match, core_match)]
-  
-  ci = AllChem.EmbedMolecule(query_mol, useRandomCoords=True, randomSeed=randomseed)
-  if ci < 0:
-    raise ValueError('Could not embed molecule.')
+        algMap = [(j, i) for j, i in zip(query_match, core_match)]
 
-  # rotate the embedded conformation onto the core:
-  rms = rdMolAlign.AlignMol(query_mol, core_mol, atomMap=algMap)
-  ff = getForceField(query_mol, confId=confId)
-  conf = core_mol.GetConformer()
-  for atom in algMap:
-    p = conf.GetAtomPosition(atom[1])
-    pIdx = ff.AddExtraPoint(p.x, p.y, p.z, fixed=True) - 1
-    ff.AddDistanceConstraint(pIdx, atom[0], 0, 0, force_constant)
-  ff.Initialize()
-  n = 4
-  more = ff.Minimize(energyTol=1e-4, forceTol=1e-3)
-  while more and n:
+    cids = rdDistGeom.EmbedMultipleConfs(query_mol, numconfs, ps)
+
+    # rotate the embedded conformation onto the core:
+    rms = rdMolAlign.AlignMol(query_mol, core_mol, atomMap=algMap)
+    ff = getForceField(query_mol, confId=confId)
+    conf = core_mol.GetConformer()
+    for atom in algMap:
+        p = conf.GetAtomPosition(atom[1])
+        pIdx = ff.AddExtraPoint(p.x, p.y, p.z, fixed=True) - 1
+        ff.AddDistanceConstraint(pIdx, atom[0], 0, 0, force_constant)
+    ff.Initialize()
+    n = 4
     more = ff.Minimize(energyTol=1e-4, forceTol=1e-3)
-    n -= 1
+    while more and n:
+        more = ff.Minimize(energyTol=1e-4, forceTol=1e-3)
+        n -= 1
 
-  # realign
-  rms = rdMolAlign.AlignMol(query_mol, core_mol, atomMap=algMap)
+    # realign
+    rms = rdMolAlign.AlignMol(query_mol, core_mol, atomMap=algMap)
 
-  query_mol.SetProp('EmbedRMS', str(rms))
-  
-  return query_mol
+    query_mol.SetProp("EmbedRMS", str(rms))
+
+    return query_mol, cids
+
 
 def _ConfToMol(mol, conf_id):
     conf = mol.GetConformer(conf_id)
@@ -644,6 +668,7 @@ def _ConfToMol(mol, conf_id):
     new_mol.RemoveAllConformers()
     new_mol.AddConformer(Chem.Conformer(conf), assignId=True)
     return new_mol
+
 
 def translate_failures(failure_counts):
     """A function to catch embeding failures and translate the codes to meaninful error messages.
@@ -665,7 +690,7 @@ def translate_failures(failure_counts):
 
     if sum(failure_counts) != 0:
         failure_msgs = {}
-        for i,k in enumerate(rdDistGeom.EmbedFailureCauses.names):
+        for i, k in enumerate(rdDistGeom.EmbedFailureCauses.names):
             if failure_counts[i] != 0:
                 failure_msgs[k] = failure_counts[i]
 
@@ -673,70 +698,87 @@ def translate_failures(failure_counts):
     else:
         return None
 
-def gen3d(mol, skip_ringfix:bool=False, max_ff_iter:int=200, etkdg_rng_seed=None, numconfs:int=1, ff:str="uff", espaloma=None, template=None, template_smarts=None):
+
+def gen3d(
+    mol,
+    skip_ringfix: bool = False,
+    max_ff_iter: int = 200,
+    etkdg_rng_seed: int = 42,
+    numconfs: int = 1,
+    ff: str = "mmff94s",
+    espaloma=None,
+    template=None,
+    template_smarts=None,
+):
     mol.RemoveAllConformers()
     mol = Chem.AddHs(mol)
-    if template is not None:
-        mol = ConstrainedEmbeding(query_mol=mol, 
-                                core_mol=template, 
-                                template_smarts=template_smarts, 
-                                confId=-1, 
-                                randomseed=42, # passing a etkdg_rng_seed=None throws an error
-                                ff='uff')
-    else:
-        ps = rdDistGeom.ETKDGv3()
-        ps.randomSeed = 42
-        ps.trackFailures = True
-        ps.enforceChirality = True
-        ps.useSmallRingTorsions = True
-        ps.useMacrocycleTorsions = True
-        ps.clearConfs = True
 
+    # Set up the ETKDG parameters
+    ps = rdDistGeom.ETKDGv3()
+    ps.randomSeed = etkdg_rng_seed
+    ps.trackFailures = True
+    ps.enforceChirality = True
+    ps.useSmallRingTorsions = True
+    ps.useMacrocycleTorsions = True
+    ps.clearConfs = True
+
+    if template is not None:
+        mol, cids = constrained_embeding(
+            query_mol=mol,
+            core_mol=template,
+            template_smarts=template_smarts,
+            numconfs=numconfs,
+            ff=ff,
+            ps=ps,
+        )
+
+    else:
         cids = rdDistGeom.EmbedMultipleConfs(mol, numconfs, ps)
-        etkdg_coords = [c.GetPositions() for c in mol.GetConformers()]
 
     if len(cids) == 0:
         translate_failures(ps.GetFailureCounts())
 
-    mol.RemoveAllConformers() # to be added back after ringfix
-    
+    etkdg_coords = [c.GetPositions() for c in mol.GetConformers()]
+
+    mol.RemoveAllConformers()  # to be added back after ringfix
+
     if skip_ringfix:
         coords_list = etkdg_coords
     else:
         coords_list = []
         [coords_list.extend(fix_rings(mol, c)) for c in etkdg_coords]
-        
+
     for coords in coords_list:
         c = Chem.Conformer(mol.GetNumAtoms())
         for i, (x, y, z) in enumerate(coords):
             c.SetAtomPosition(i, Point3D(x, y, z))
         mol.AddConformer(c, assignId=True)
 
-    if template is None:
-        if ff == "uff":
-            _energies = rdForceFieldHelpers.UFFOptimizeMoleculeConfs(mol, maxIters=max_ff_iter)
-            energies = [e[1] for e in _energies]
-        elif ff == "mmff94":
-            _energies = rdForceFieldHelpers.MMFFOptimizeMoleculeConfs(mol, maxIters=max_ff_iter)
-            energies = [e[1] for e in _energies]
-        elif ff == "mmff94s":
-            _energies = rdForceFieldHelpers.MMFFOptimizeMoleculeConfs(mol, maxIters=max_ff_iter, mmffVariant="mmff94s")
-            energies = [e[1] for e in _energies]
-        elif ff == 'espaloma':
-            if espaloma is None:
-                raise ValueError("minim_espaloma needs to be passed")
-            mol, energies = espaloma.minim_espaloma(mol)
-        else:
-            raise RuntimeError("ff is %s but must be 'uff', 'mmff94', 'mmff94s', or 'espaloma'" % ff)
-        
-    lista = [list(a) for a in zip(cids, energies)]
-    sorted_list = sorted(lista, key=lambda x: x[1])
-    best_energy_index = sorted_list[0][0]
-    final_mol = _ConfToMol(mol,best_energy_index)
-   
+    if ff not in ["uff", "mmff94", "mmff94s", "espaloma"]:
+        raise RuntimeError(
+            f"ff is {ff} but must be 'uff', 'mmff94', 'mmff94s', or 'espaloma'"
+        )
+
+    if ff == "espaloma":
+        if espaloma is None:
+            raise ValueError("espaloma minimizer needs to be passed")
+        mol, energies = espaloma.minim_espaloma(mol)
+    else:
+        optimize_func = {
+            "uff": rdForceFieldHelpers.UFFOptimizeMoleculeConfs,
+            "mmff94": rdForceFieldHelpers.MMFFOptimizeMoleculeConfs,
+            "mmff94s": lambda mol, maxIters: rdForceFieldHelpers.MMFFOptimizeMoleculeConfs(
+                mol, maxIters=maxIters, mmffVariant="mmff94s"
+            ),
+        }[ff]
+        _energies = optimize_func(mol, maxIters=max_ff_iter)
+        energies = [e[1] for e in _energies]
+
+    best_energy_index = min(zip(cids, energies), key=lambda x: x[1])[0]
+    final_mol = _ConfToMol(mol, best_energy_index)
+
     return final_mol
 
+
 if __name__ == "__main__":
-    import json
     config = ScrubberCore.get_defaults()
-    print("CONFIG!")

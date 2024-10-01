@@ -35,6 +35,7 @@ This file contains the core scrubber object
 INSPIRATION: https://xkcd.com/1343/
 """
 
+
 class ScrubberCore(object):
     """read input files, manipulate them to perform the following operations:
 
@@ -243,7 +244,7 @@ class ScrubberCore(object):
         )
         # geometry operations
         options["geometry"]["active"] = any(
-           options["geometry"]["values"][x] for x in ["gen3d", "fix_ring_corners"]
+            options["geometry"]["values"][x] for x in ["gen3d", "fix_ring_corners"]
         )
         return options
 
@@ -398,8 +399,8 @@ class ScrubberCore(object):
             self.print_summary()
 
     def wait_pending(self, skipped, quiet=False):
-        """ wait for all pending operations: join registered workers;
-        retrieve information from the comm pipes; populate summary inforation """
+        """wait for all pending operations: join registered workers;
+        retrieve information from the comm pipes; populate summary inforation"""
         for name, worker in self._registered_workers:
             if not quiet:
                 t_start = time.time()
@@ -478,6 +479,7 @@ class ScrubberCore(object):
             else:
                 curr_target[k] = v
 
+
 class Scrub:
 
     def __init__(
@@ -490,8 +492,8 @@ class Scrub:
         skip_tautomers=False,
         skip_ringfix=False,
         skip_gen3d=False,
-        template = None,
-        template_smarts = None,
+        template=None,
+        template_smarts=None,
         do_gen2d=False,
         max_ff_iter=200,
         numconfs=1,
@@ -506,37 +508,43 @@ class Scrub:
         self.ph_high = ph_high
         self.do_acidbase = not skip_acidbase
         self.do_tautomers = not skip_tautomers
-        self.skip_ringfix = skip_ringfix # not avoiding negative to pass directly to gen3d
+        self.skip_ringfix = (
+            skip_ringfix  # not avoiding negative to pass directly to gen3d
+        )
         self.do_gen3d = not skip_gen3d
         self.template = template
         self.template_smarts = template_smarts
         self.do_gen2d = do_gen2d
         self.max_ff_iter = max_ff_iter
         self.numconfs = numconfs
-        self.etkdg_rng_seed = etkdg_rng_seed
+        self.etkdg_rng_seed = (
+            etkdg_rng_seed if etkdg_rng_seed else random.randint(0, 1000000)
+        )
         self.ff = ff
 
-        if ff == 'espaloma':
+        if ff == "espaloma":
             self.espaloma = EspalomaMinimizer()
         else:
             self.espaloma = None
 
     def __call__(self, input_mol):
 
-        mol = Chem.RemoveHs(input_mol) 
+        mol = Chem.RemoveHs(input_mol)
         pool = [input_mol]
 
         if self.do_acidbase:
             molset = UniqueMoleculeContainer()
             for mol in pool:
-                for mol_out in self.acid_base_conjugator(mol, self.ph_low, self.ph_high):
+                for mol_out in self.acid_base_conjugator(
+                    mol, self.ph_low, self.ph_high
+                ):
                     molset.add(mol_out)
             pool = list(molset)
 
         if self.do_tautomers:
             molset = UniqueMoleculeContainer()
             for mol in pool:
-                for mol_out in self.tautomerizer(mol): 
+                for mol_out in self.tautomerizer(mol):
                     molset.add(mol_out)
             pool = list(molset)
 
@@ -552,10 +560,10 @@ class Scrub:
                     ff=self.ff,
                     espaloma=self.espaloma,
                     template=self.template,
-                    template_smarts=self.template_smarts
+                    template_smarts=self.template_smarts,
                 )
                 output_mol_list.append(mol_out)
-        elif self.do_gen2d: # useful to write SD files
+        elif self.do_gen2d:  # useful to write SD files
             output_mol_list = []
             for mol in pool:
                 AllChem.Compute2DCoords(mol)
@@ -564,7 +572,8 @@ class Scrub:
             output_mol_list = pool
 
         return output_mol_list
-    
+
+
 def constrained_embeding(
     query_mol,
     core_mol,
@@ -583,10 +592,12 @@ def constrained_embeding(
 
     if ff == "uff":
         getForceField = AllChem.UFFGetMoleculeForceField
-    elif ff == "mmff94" :
+    elif ff == "mmff94":
         getForceField = lambda x: AllChem.MMFFGetMoleculeForceField(
             x, AllChem.MMFFGetMoleculeProperties(x), confId=confId
         )
+    # This is just is a minimization with restraints to force the querry mol to match the template. 
+    # If you chose espaloma as ff it will still minimize it at the end with that forcefield.
     elif ff == "mmff94s" or ff == "espaloma":
         getForceField = lambda x: AllChem.MMFFGetMoleculeForceField(
             x,
@@ -650,6 +661,7 @@ def constrained_embeding(
 
     return query_mol, cids
 
+
 def _ConfToMol(mol, conf_id):
     conf = mol.GetConformer(conf_id)
     new_mol = Chem.Mol(mol)
@@ -691,7 +703,7 @@ def gen3d(
     mol,
     skip_ringfix: bool = False,
     max_ff_iter: int = 200,
-    etkdg_rng_seed=None,
+    etkdg_rng_seed: int = 42,
     numconfs: int = 1,
     ff: str = "mmff94s",
     espaloma=None,
@@ -703,7 +715,7 @@ def gen3d(
 
     # Set up the ETKDG parameters
     ps = rdDistGeom.ETKDGv3()
-    ps.randomSeed = 42
+    ps.randomSeed = etkdg_rng_seed
     ps.trackFailures = True
     ps.enforceChirality = True
     ps.useSmallRingTorsions = True
@@ -764,8 +776,9 @@ def gen3d(
 
     best_energy_index = min(zip(cids, energies), key=lambda x: x[1])[0]
     final_mol = _ConfToMol(mol, best_energy_index)
-    
+
     return final_mol
+
 
 if __name__ == "__main__":
     config = ScrubberCore.get_defaults()

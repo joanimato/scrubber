@@ -1,1 +1,4 @@
 *.sdf
+*ipynb
+.vscode/
+*.pyc

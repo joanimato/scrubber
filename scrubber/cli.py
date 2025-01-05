@@ -1,5 +1,9 @@
 import multiprocessing
 import argparse
+import tomllib
+import sys
+
+## This file is mostly not used. 
 
 # provide method to convert strings into boolean
 from distutils.util import strtobool
@@ -786,3 +790,63 @@ extra_options = {
         "default": False,
     },
 }
+
+
+def override_defaults(argv: list, toml_args: dict) -> dict:
+    """
+    Override default values if 1) where not provided through CLI
+    and 2) where provided in TOML.  
+
+    """
+
+    total_args = ["--ph", "--skip_acidbase", "--skip_tautomers", "--skip_ringfix",
+                     "--skip_gen3d", "--cpu", "--debug", "--max_ff_iter", "--numconfs", 
+                     "--ff", "--wcg"]
+    
+
+    # filter defaults not provided in cli
+    args_to_check = list(filter((lambda x: x not in argv), total_args))
+    args_to_check = list(map((lambda x: x[2:]), args_to_check))
+
+    # filter toml_args with only the keys present in the above list. 
+    filtered_toml_args = {key: toml_args[key] for key in args_to_check if key in toml_args}
+
+    return filtered_toml_args
+
+
+def parse_toml(argv: list, args: argparse.Namespace)-> argparse.Namespace:
+    """
+    Read toml file from the argument list. This function assumes the
+    `args` variable has already been check and contains a toml as input. 
+    """
+
+    # convert to dict for checking against toml input 
+    dict_args = vars(args)
+
+    toml_args = {}
+
+    # read toml 
+    with open(args.input, "rb") as f:
+        toml_args = tomllib.load(f)
+
+    # replace defaults not provided in CLI but provided in toml
+    filtered_toml = override_defaults(argv, toml_args)
+    for key, value in filtered_toml.items():
+        dict_args[key] = value
+
+
+    # eliminate duplicates; commmand line arguments always take precedence. 
+    for key, value in toml_args.items():
+        if key not in dict_args or dict_args[key] is None:
+            dict_args[key] = value
+
+
+
+    # replace arg.input with whatever is in the toml file
+    dict_args['input'] = toml_args['input']
+
+
+    # finally, box all args back into Namespace object. 
+    args = argparse.Namespace(**dict_args)
+
+    return args

@@ -10,7 +10,7 @@ import sys
 
 from scrubber import Scrub
 from scrubber import SMIMolSupplierWrapper
-from scrubber.cli import parse_toml
+from scrubber.cli import parse_toml, get_default_args, get_valid_args
 
 from rdkit import Chem
 from rdkit import RDLogger
@@ -248,10 +248,15 @@ args_essential, remaining_args = parser_essential.parse_known_args()
 args_advanced = parser_advanced.parse_args(remaining_args)
 args = argparse.Namespace(**vars(args_essential), **vars(args_advanced))
 
+
+# get default and all valid command line arguments for toml checking
+default_args = get_default_args([parser_essential, parser_advanced])
+valid_args = get_valid_args([parser_essential, parser_advanced])
+
 # check for toml file and parse it
 extension = pathlib.Path(args.input).suffix
 if extension == ".toml": 
-    args = parse_toml(sys.argv, args)
+    args = parse_toml(sys.argv, args, default_args, valid_args)
 
 
 # Check that input and output has been provided. 
